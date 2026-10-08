@@ -910,6 +910,15 @@ jobs:
           fi
           ./build.py --flutter --hwcodec --unix-file-copy-paste ${{ matrix.job.extra-build-args }}
 
+      - name: Sign the complete macOS test bundle
+        run: |
+          # build.py adds service after Xcode signs the app. Seal the final bundle;
+          # this ad-hoc test build has no Team ID for hardened library validation.
+          APP=./flutter/build/macos/Build/Products/Release/RustDesk.app
+          codesign --force --deep --sign - --options 0 \
+            --entitlements flutter/macos/Runner/Release.entitlements "$APP"
+          codesign --verify --deep --strict "$APP"
+
       - name: create unsigned dmg
         if: env.UPLOAD_ARTIFACT == 'true'
         run: |
@@ -917,6 +926,15 @@ jobs:
           CREATE_DMG="$(readlink -f "$CREATE_DMG")"
           sed -i -e 's/MAXIMUM_UNMOUNTING_ATTEMPTS=3/MAXIMUM_UNMOUNTING_ATTEMPTS=7/' "$CREATE_DMG"
           create-dmg --icon "RustDesk.app" 200 190 --hide-extension "RustDesk.app" --window-size 800 400 --app-drop-link 600 185 rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg ./flutter/build/macos/Build/Products/Release/RustDesk.app
+
+      - name: Verify the packaged macOS executable starts
+        if: env.UPLOAD_ARTIFACT == 'true'
+        run: |
+          MOUNT_DIR=$(mktemp -d)
+          hdiutil attach -readonly -nobrowse -mountpoint "$MOUNT_DIR" rustdesk-${{ env.VERSION }}-${{ matrix.job.arch }}.dmg
+          trap 'hdiutil detach "$MOUNT_DIR"; rmdir "$MOUNT_DIR"' EXIT
+          codesign --verify --deep --strict "$MOUNT_DIR/RustDesk.app"
+          test "$("$MOUNT_DIR/RustDesk.app/Contents/MacOS/RustDesk" --version)" = "${{ env.VERSION }}"
 
       - name: Upload unsigned macOS app
         if: env.UPLOAD_ARTIFACT == 'true'
