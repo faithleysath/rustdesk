@@ -124,7 +124,6 @@ class FfiModel with ChangeNotifier {
   bool _androidDocumentPickerActive = false;
   bool _androidDocumentPickerInterruptedConnection = false;
   bool _viewOnly = false;
-  bool _agentControl = false;
   Map<String, String>? mcpLastMsgBox;
   bool _showMyCursor = false;
   WeakReference<FFI> parent;
@@ -167,8 +166,10 @@ class FfiModel with ChangeNotifier {
   bool get isPeerLinux => _pi.platform == kPeerPlatformLinux;
   bool get isPeerWindows => _pi.platform == kPeerPlatformWindows;
 
-  bool get viewOnly => _viewOnly || _agentControl;
-  bool get agentControl => _agentControl;
+  bool get viewOnly => _viewOnly || agentControl;
+  String get agentControlGrant =>
+      bind.sessionGetAgentControl(sessionId: sessionId);
+  bool get agentControl => agentControlGrant.isNotEmpty;
   bool get showMyCursor => _showMyCursor;
 
   set inputBlocked(v) {
@@ -478,42 +479,11 @@ class FfiModel with ChangeNotifier {
     };
   }
 
-  /// Saves the screenshot silently when it was requested by the MCP server,
-  /// which records the target path in a per-session option because the
-  /// request comes from a different window. A failure replaces the path with
-  /// [kMcpScreenshotErrorPrefix] and the reason. Returns true when handled.
-  Future<bool> _handleMcpScreenshot(SessionID sessionId, String msg) async {
-    final path = await bind.sessionGetFlutterOption(
-            sessionId: sessionId, k: kMcpScreenshotPathOption) ??
-        '';
-    if (path.isEmpty || path.startsWith(kMcpScreenshotErrorPrefix)) {
-      return false;
-    }
-    if (path == kMcpScreenshotDropLate) {
-      await bind.sessionSetFlutterOption(
-          sessionId: sessionId, k: kMcpScreenshotPathOption, v: '');
-      return true;
-    }
-    final error = msg.isEmpty
-        ? await bind.sessionHandleScreenshot(
-            sessionId: sessionId, action: '0:$path')
-        : msg;
-    await bind.sessionSetFlutterOption(
-        sessionId: sessionId,
-        k: kMcpScreenshotPathOption,
-        v: error.isEmpty ? '' : '$kMcpScreenshotErrorPrefix$error');
-    return true;
-  }
-
   _handleScreenshot(
-      Map<String, dynamic> evt, SessionID sessionId, String peerId) async {
+      Map<String, dynamic> evt, SessionID sessionId, String peerId) {
     timerScreenshot?.cancel();
     timerScreenshot = null;
     final msg = evt['msg'] ?? '';
-    if (mainGetLocalBoolOptionSync(kOptionEnableMcpServer) &&
-        await _handleMcpScreenshot(sessionId, msg)) {
-      return;
-    }
     final msgBoxType = 'custom-nook-nocancel-hasclose';
     final msgBoxTitle = 'Take screenshot';
     final dialogManager = parent.target!.dialogManager;
@@ -1871,12 +1841,7 @@ class FfiModel with ChangeNotifier {
     }
   }
 
-  void setAgentControl(bool value) {
-    if (_agentControl != value) {
-      _agentControl = value;
-      notifyListeners();
-    }
-  }
+  void refreshAgentControl() => notifyListeners();
 
   void setShowMyCursor(bool value) {
     if (_showMyCursor != value) {

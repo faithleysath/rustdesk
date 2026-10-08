@@ -9,12 +9,15 @@ import 'package:window_manager/window_manager.dart';
 import 'mcp_backend.dart';
 import 'mcp_dispatcher.dart';
 import 'mcp_http_server.dart';
+import 'mcp_input.dart';
 
 class McpServerManager {
   McpServerManager._();
   static final McpServerManager instance = McpServerManager._();
 
   McpHttpServer? _server;
+  RustDeskMcpBackend? _backend;
+  final _operations = McpOperationQueue();
   String? lastError;
 
   bool get running => _server?.running ?? false;
@@ -25,7 +28,9 @@ class McpServerManager {
     return v != null && v > 0 && v < 65536 ? v : kMcpDefaultPort;
   }
 
-  Future<String> token({bool regenerate = false}) async {
+  Future<String> token() => _operations.run(() => _token());
+
+  Future<String> _token({bool regenerate = false}) async {
     var t = bind.mainGetLocalOption(key: kOptionMcpServerToken);
     if (t.isEmpty || regenerate) {
       t = generateMcpToken();
@@ -34,15 +39,31 @@ class McpServerManager {
     return t;
   }
 
-  Future<void> regenerateToken() async {
-    await token(regenerate: true);
-    await _stop();
-    await sync();
-  }
+  Future<String?> regenerateToken() => _run(() async {
+        await _stop();
+        await _token(regenerate: true);
+        await _sync();
+      });
 
   String endpoint() => 'http://127.0.0.1:$port$kMcpEndpointPath';
 
   Future<void> sync() async {
+    await _run(_sync);
+  }
+
+  Future<String?> _run(Future<void> Function() operation) =>
+      _operations.run(() async {
+        try {
+          await operation();
+          lastError = null;
+        } catch (e) {
+          lastError = '$e';
+          debugPrint('Failed to update MCP server: $e');
+        }
+        return lastError;
+      });
+
+  Future<void> _sync() async {
     final enabled = mainGetLocalBoolOptionSync(kOptionEnableMcpServer) &&
         !bind.isIncomingOnly();
     if (!enabled) {
@@ -51,22 +72,28 @@ class McpServerManager {
     }
     if (running && _server?.port == currentPort) return;
     await _stop();
-    try {
-      final backend = RustDeskMcpBackend(approveConnect: _askUser);
-      final server = McpHttpServer(McpDispatcher(backend), await token());
-      await server.start(port: currentPort);
-      _server = server;
-      lastError = null;
-    } catch (e) {
-      lastError = '$e';
-      debugPrint('Failed to start MCP server: $e');
-    }
+    final backend = RustDeskMcpBackend(approveConnect: _askUser);
+    final server = McpHttpServer(McpDispatcher(backend), await _token());
+    await server.start(port: currentPort);
+    _server = server;
+    _backend = backend;
+  }
+
+  /// The user took a session back from the agent in its window.
+  Future<void> onControlTakenOver(String sessionId, String grantId) async {
+    await _backend?.takeOver(sessionId, grantId);
   }
 
   Future<void> _stop() async {
     final s = _server;
-    _server = null;
-    await s?.stop();
+    final backend = _backend;
+    try {
+      await s?.stop();
+      _server = null;
+    } finally {
+      await backend?.stop();
+    }
+    _backend = null;
   }
 
   Future<bool> _askUser(String peerId) async {

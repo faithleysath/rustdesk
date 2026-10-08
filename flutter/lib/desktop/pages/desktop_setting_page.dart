@@ -693,6 +693,11 @@ class _GeneralState extends State<_General> {
           },
         ),
       ),
+      Align(
+        alignment: Alignment.topLeft,
+        child: Text(translate('mcp-read-access-tip'),
+            style: TextStyle(fontSize: 12, color: Colors.orange.shade800)),
+      ).marginOnly(left: 35, right: 10, bottom: 4),
       if (mainGetLocalBoolOptionSync(kOptionEnableMcpServer)) ...[
         _OptionCheckBox(
           context,
@@ -3411,8 +3416,8 @@ class _McpConnectionInfo extends StatelessWidget {
               icon: const Icon(Icons.refresh_rounded, size: 16),
               label: Text(translate('Regenerate token')),
               onPressed: () async {
-                await m.regenerateToken();
-                showToast(translate('Successful'));
+                final error = await m.regenerateToken();
+                showToast(error ?? translate('Successful'));
               },
             ),
           ],
